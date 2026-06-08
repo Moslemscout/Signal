@@ -12,20 +12,26 @@ except ImportError:
     print("Silakan jalankan: pip install pyserial")
     sys.exit(1)
 
+has_miniaudio = False
+has_pydub = False
+
 try:
-    # Kami merekomendasikan 'pydub' karena sangat handal menangani decoding MP3.
-    # Alternatif lain yang sangat ringan adalah 'miniaudio'.
-    from pydub import AudioSegment
+    import miniaudio
+    has_miniaudio = True
 except ImportError:
-    print("Error: Library 'pydub' belum terinstal.")
-    print("Silakan jalankan: pip install pydub")
-    print("Catatan: pydub memerlukan ffmpeg terinstal di sistem Anda untuk membaca file .mp3.")
-    print("Jika Anda ingin alternatif tanpa ffmpeg, Anda juga bisa menginstal 'miniaudio': pip install miniaudio")
-    # Cek apakah miniaudio tersedia sebagai alternatif
-    try:
-        import miniaudio
-    except ImportError:
-        sys.exit(1)
+    pass
+
+try:
+    from pydub import AudioSegment
+    has_pydub = True
+except ImportError:
+    pass
+
+if not has_miniaudio and not has_pydub:
+    print("Error: Tidak ada library audio decoder yang terinstal.")
+    print("Silakan jalankan: pip install miniaudio")
+    sys.exit(1)
+
 
 def get_ports():
     ports = list(serial.tools.list_ports.comports())
@@ -84,14 +90,26 @@ def main():
     # 3. Dekode MP3 ke PCM Mono 16-bit 22050Hz
     target_sr = 22050
     try:
-        if 'pydub' in sys.modules:
+        if has_miniaudio:
+            pcm_bytes, sr = decode_audio_miniaudio(file_path, target_sr)
+        elif has_pydub:
             pcm_bytes, sr = decode_audio_pydub(file_path, target_sr)
         else:
-            pcm_bytes, sr = decode_audio_miniaudio(file_path, target_sr)
+            raise Exception("Tidak ada library audio decoder yang tersedia.")
     except Exception as e:
-        print(f"Gagal mendekode audio: {e}")
-        print("Cobalah gunakan file berformat .wav jika dekoder .mp3 Anda bermasalah.")
-        sys.exit(1)
+        print(f"Gagal mendekode audio menggunakan decoder utama: {e}")
+        # Fallback jika miniaudio gagal dan pydub terinstal
+        if has_miniaudio and has_pydub:
+            print("Mencoba fallback menggunakan pydub...")
+            try:
+                pcm_bytes, sr = decode_audio_pydub(file_path, target_sr)
+            except Exception as e2:
+                print(f"Fallback ke pydub juga gagal: {e2}")
+                sys.exit(1)
+        else:
+            print("Cobalah gunakan file berformat .wav jika dekoder .mp3 Anda bermasalah.")
+            sys.exit(1)
+
 
     total_bytes = len(pcm_bytes)
     duration = total_bytes / (target_sr * 2) # 2 bytes per sample
