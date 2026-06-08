@@ -49,11 +49,23 @@ void setup() {
   }
 
   // 2. Alokasi Ring Buffer FreeRTOS di PSRAM (jika ada) untuk menghindari race condition data audio
-  audioRingBuffer = xRingbufferCreateWithCaps(RING_BUFFER_SIZE, RINGBUF_TYPE_BYTEBUF, MALLOC_CAP_SPIRAM);
+  if (ESP.getPsramSize() > 0) {
+    uint8_t* puiRingbufferStorage = (uint8_t*)heap_caps_malloc(RING_BUFFER_SIZE, MALLOC_CAP_SPIRAM);
+    StaticRingbuffer_t* pxStaticRingbuffer = (StaticRingbuffer_t*)heap_caps_malloc(sizeof(StaticRingbuffer_t), MALLOC_CAP_SPIRAM);
+    
+    if (puiRingbufferStorage != NULL && pxStaticRingbuffer != NULL) {
+      audioRingBuffer = xRingbufferCreateStatic(RING_BUFFER_SIZE, RINGBUF_TYPE_BYTEBUF, puiRingbufferStorage, pxStaticRingbuffer);
+      if (audioRingBuffer != NULL) {
+        Serial.println("Ring Buffer berhasil dibuat di PSRAM.");
+      }
+    }
+  }
+
   if (audioRingBuffer == NULL) {
-    Serial.println("Gagal mengalokasi Ring Buffer di PSRAM. Mencoba alokasi di SRAM internal...");
+    Serial.println("Gagal mengalokasi di PSRAM atau PSRAM tidak aktif. Mencoba alokasi di SRAM internal...");
     audioRingBuffer = xRingbufferCreate(RING_BUFFER_SIZE, RINGBUF_TYPE_BYTEBUF);
   }
+
 
   if (audioRingBuffer == NULL) {
     Serial.println("FATAL: Gagal membuat Ring Buffer! Sistem berhenti.");
