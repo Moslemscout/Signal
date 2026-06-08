@@ -52,9 +52,15 @@ def decode_audio_pydub(file_path, target_sr=22050):
 def decode_audio_miniaudio(file_path, target_sr=22050):
     import miniaudio
     print(f"Membaca file audio dengan miniaudio: {file_path}")
-    # Decode dan resample sekaligus
-    decoded = miniaudio.decode_file_resampled(file_path, sample_rate=target_sr, nchannels=1, format=miniaudio.SampleFormat.SIGNED16)
+    # Decode dan resample sekaligus menggunakan decode_file
+    decoded = miniaudio.decode_file(
+        file_path, 
+        sample_rate=target_sr, 
+        nchannels=1, 
+        output_format=miniaudio.SampleFormat.SIGNED16
+    )
     return decoded.samples.tobytes(), target_sr
+
 
 def main():
     print("=== Python Audio Streamer untuk ESP32-S3 ===")
