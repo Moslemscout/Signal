@@ -22,6 +22,9 @@
 #include "freertos/semphr.h"
 #include "freertos/ringbuf.h"
 
+// Deklarasi Global Objek OLED U8g2 (memindahkan alokasi dari stack task ke static RAM global)
+U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE, /* clock=*/ I2C_SCL, /* data=*/ I2C_SDA);
+
 // Handle untuk Ring Buffer
 RingbufHandle_t audioRingBuffer = NULL;
 
@@ -85,12 +88,28 @@ void setup() {
   Wire.begin(I2C_SDA, I2C_SCL, 400000);
   Serial.println("I2C berhasil diinisialisasi pada kecepatan 400kHz.");
 
+  // Scan I2C untuk melacak apakah OLED terhubung fisik dan mendeteksi alamatnya
+  Serial.println("Memulai pemindaian (scan) I2C...");
+  int nDevices = 0;
+  for (byte address = 1; address < 127; address++) {
+    Wire.beginTransmission(address);
+    byte error = Wire.endTransmission();
+    if (error == 0) {
+      Serial.printf("Device I2C ditemukan pada alamat: 0x%02X\n", address);
+      nDevices++;
+    }
+  }
+  if (nDevices == 0) {
+    Serial.println("PERINGATAN: Tidak ada device I2C yang ditemukan! Periksa kabel SDA/SCL, VCC/GND, dan kecocokan PIN.");
+  }
+
+
   // 5. Buat Task FreeRTOS dan Pin ke Core tertentu untuk pemrosesan paralel yang mulus
   // Task 1: Akuisisi Data Audio (Core 0, Prioritas Tinggi)
   xTaskCreatePinnedToCore(
     AudioAcquisitionTask,
     "AudioAcqTask",
-    3 * 1024,         // Stack size (3 KB)
+    4 * 1024,         // Stack size ditingkatkan (4 KB)
     NULL,
     10,               // Prioritas tinggi agar tidak ada data serial yang hilang
     NULL,
@@ -101,7 +120,7 @@ void setup() {
   xTaskCreatePinnedToCore(
     DSPTask,
     "DSP_FFT_Task",
-    8 * 1024,         // Stack size (8 KB - aman untuk double precision math)
+    16 * 1024,        // Stack size ditingkatkan (16 KB)
     NULL,
     5,                // Prioritas sedang
     NULL,
@@ -112,7 +131,7 @@ void setup() {
   xTaskCreatePinnedToCore(
     OLEDDisplayTask,
     "DisplayTask",
-    4 * 1024,         // Stack size (4 KB)
+    16 * 1024,        // Stack size ditingkatkan (16 KB - aman untuk rendering grafis)
     NULL,
     2,                // Prioritas rendah
     NULL,
@@ -162,15 +181,27 @@ void AudioAcquisitionTask(void *pvParameters) {
 void DSPTask(void *pvParameters) {
   const size_t bytes_to_read = SAMPLES * sizeof(int16_t); // 512 sampel * 2 byte = 1024 byte
   
-  // Alokasikan buffer pemrosesan secara dinamis di PSRAM agar SRAM tetap bersih
-  int16_t* audio_samples = (int16_t*)heap_caps_malloc(bytes_to_read, MALLOC_CAP_SPIRAM);
-  double* vReal = (double*)heap_caps_malloc(SAMPLES * sizeof(double), MALLOC_CAP_SPIRAM);
-  double* vImag = (double*)heap_caps_malloc(SAMPLES * sizeof(double), MALLOC_CAP_SPIRAM);
+  // Alokasikan buffer pemrosesan secara dinamis di PSRAM, fallback ke internal SRAM jika gagal/tidak ada PSRAM
+  int16_t* audio_samples = NULL;
+  double* vReal = NULL;
+  double* vImag = NULL;
+
+  if (ESP.getPsramSize() > 0) {
+    audio_samples = (int16_t*)heap_caps_malloc(bytes_to_read, MALLOC_CAP_SPIRAM);
+    vReal = (double*)heap_caps_malloc(SAMPLES * sizeof(double), MALLOC_CAP_SPIRAM);
+    vImag = (double*)heap_caps_malloc(SAMPLES * sizeof(double), MALLOC_CAP_SPIRAM);
+  }
+
+  // Fallback ke SRAM internal jika alokasi PSRAM gagal atau PSRAM tidak aktif
+  if (audio_samples == NULL) audio_samples = (int16_t*)malloc(bytes_to_read);
+  if (vReal == NULL) vReal = (double*)malloc(SAMPLES * sizeof(double));
+  if (vImag == NULL) vImag = (double*)malloc(SAMPLES * sizeof(double));
 
   if (audio_samples == NULL || vReal == NULL || vImag == NULL) {
-    Serial.println("DSP TASK ERROR: Gagal mengalokasi buffer pemrosesan di PSRAM!");
+    Serial.println("DSP TASK ERROR: Gagal mengalokasi buffer pemrosesan di memori!");
     vTaskDelete(NULL);
   }
+
 
   // Inisialisasi library FFT
   arduinoFFT FFT = arduinoFFT(vReal, vImag, SAMPLES, SAMPLING_FREQUENCY);
@@ -253,10 +284,11 @@ void DSPTask(void *pvParameters) {
 // TASK 3: Visualisasi Spektrum pada Layar OLED
 // ==========================================
 void OLEDDisplayTask(void *pvParameters) {
-  // Inisialisasi U8g2 untuk SSD1306 128x64 dengan Hardware I2C
-  // Menggunakan Full Buffer (_F_) untuk grafis yang mulus tanpa flicker
-  U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE, /* clock=*/ I2C_SCL, /* data=*/ I2C_SDA);
-  
+  // GANTI ALAMAT I2C DI SINI JIKA DIPERLUKAN:
+  // Alamat I2C standar adalah 0x3C (dalam U8g2 diubah menjadi 0x3C * 2 = 0x78)
+  // Jika OLED Anda menggunakan alamat 0x3D, ubah nilainya menjadi 0x3D * 2 = 0x7A
+  u8g2.setI2CAddress(0x78); 
+   
   if (!u8g2.begin()) {
     Serial.println("OLED TASK ERROR: Inisialisasi layar OLED gagal!");
     vTaskDelete(NULL);

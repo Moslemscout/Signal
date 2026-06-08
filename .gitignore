@@ -1,13 +1,11 @@
 # PlatformIO local files
-.pio/
-.pioenvs/
 .piolibdeps/
 .clang_complete
 .gcc-flags.json
 
 # VS Code files
 .vscode/
-
+ 
 # Python compiled files
 __pycache__/
 *.pyc
